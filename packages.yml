@@ -1,0 +1,2 @@
+# No external packages needed — surrogate key uses native md5()
+packages: []

@@ -1,0 +1,27 @@
+name: ecommerce_poc
+version: "1.0.0"
+config-version: 2
+
+profile: ecommerce_poc
+
+model-paths: [ "models" ]
+seed-paths: [ "seeds" ]
+test-paths: [ "tests" ]
+macro-paths: [ "macros" ]
+log-path: "logs"
+target-path: "target"
+clean-targets: [ "target", "dbt_packages" ]
+
+seeds:
+  ecommerce_poc:
+    +schema: raw
+    +quote_columns: false
+
+models:
+  ecommerce_poc:
+    staging:
+      +schema: staging
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table
