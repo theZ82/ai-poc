@@ -1,0 +1,273 @@
+version: 2
+
+# ═════════════════════════════════════════════════════════════════
+#  SEMANTIC LAYER — Olist E-Commerce Data Warehouse
+#
+#  Maintained by: Senior Data Engineer
+#  Purpose: Source of truth for table structures, business rules,
+#           metric definitions, and join paths.
+#
+#  HOW THIS FEEDS THE AGENT:
+#    agent.py reads this file at startup → converts to plain text →
+#    injects into Claude's system prompt → Claude uses it to reason
+#    about schema before writing any SQL.
+#
+#  The richer this file, the smarter the agent's SQL.
+# ═════════════════════════════════════════════════════════════════
+
+models:
+
+  # ── FACT TABLE ─────────────────────────────────────────────────
+  - name: fact_order_items
+    description: >
+      Central fact table. Grain: one row per order line item.
+      An order can have multiple items (multiple rows per order_id).
+      Start every analysis here — join outward to dimension tables.
+
+      BUSINESS RULES:
+      - revenue = price + freight_value. This is the canonical revenue metric.
+        NEVER use payment_value for item-level revenue — it covers the full order
+        and may be split across installments.
+      - For revenue analysis, filter order_status = 'delivered' by default.
+      - delivery_delta_days: negative = delivered early, positive = late, null = pending.
+      - order_status values: created / approved / invoiced / processing /
+        shipped / delivered / canceled / unavailable.
+
+      SAFE JOINS — always use these paths, no others:
+      - fact_order_items JOIN dim_customer  ON customer_id = customer_id
+      - fact_order_items JOIN dim_product   ON product_id  = product_id
+      - fact_order_items JOIN dim_seller    ON seller_id   = seller_id
+      - fact_order_items JOIN dim_date      ON date_id     = date_id
+
+    columns:
+      - name: order_item_sk
+        description: Surrogate primary key (MD5 hash of order_id + order_item_id). Do not filter on this.
+
+      - name: order_id
+        description: >
+          Order identifier. One order can contain multiple items (multiple rows).
+          Use COUNT(DISTINCT order_id) to count orders, not rows.
+        tests: [not_null]
+
+      - name: order_item_id
+        description: Position of item within the order (1-indexed). order_id + order_item_id is unique.
+
+      - name: product_id
+        description: FK to dim_product.product_id.
+        tests: [not_null]
+
+      - name: seller_id
+        description: FK to dim_seller.seller_id. The seller who fulfilled this specific line item.
+        tests: [not_null]
+
+      - name: customer_id
+        description: >
+          FK to dim_customer.customer_id.
+          NOTE: This is a transaction-level ID, not a person ID.
+          A repeat buyer gets a new customer_id per order.
+          Join to dim_customer and use customer_unique_id for person-level analysis.
+        tests: [not_null]
+
+      - name: date_id
+        description: FK to dim_date.date_id. Represents the order purchase date (YYYYMMDD integer).
+        tests: [not_null]
+
+      - name: order_status
+        description: >
+          Current status of the order.
+          Values: created, approved, invoiced, processing, shipped, delivered, canceled, unavailable.
+          Use WHERE order_status = 'delivered' for completed order analysis.
+        tests:
+          - accepted_values:
+              values: [created, approved, invoiced, processing, shipped,
+                       delivered, canceled, unavailable]
+
+      - name: ordered_at
+        description: Timestamp when the customer placed the order. Use for time-series analysis.
+
+      - name: delivered_at
+        description: Timestamp of actual delivery. NULL if not yet delivered.
+
+      - name: estimated_delivery_at
+        description: Promised delivery date shown to the customer at checkout.
+
+      - name: delivery_delta_days
+        description: >
+          Difference in days between actual and estimated delivery.
+          Negative = delivered early (good). Positive = late (bad). NULL = not delivered.
+          KPI: AVG(delivery_delta_days) for on-time performance.
+          Late order rate: AVG(CASE WHEN delivery_delta_days > 0 THEN 1.0 ELSE 0.0 END).
+
+      - name: payment_type
+        description: >
+          Payment method. Values: credit_card, boleto, voucher, debit_card.
+          credit_card dominates (~74% of orders).
+
+      - name: payment_installments
+        description: Number of installments (1 = paid in full). Range 1-24.
+
+      - name: payment_value
+        description: >
+          CAUTION: Total payment for the whole order, NOT for this line item.
+          Do NOT use for per-item revenue. Use revenue instead.
+
+      - name: price
+        description: Sale price of this line item in BRL. Excludes freight.
+
+      - name: freight_value
+        description: Shipping cost for this line item in BRL.
+
+      - name: revenue
+        description: >
+          CANONICAL REVENUE METRIC. revenue = price + freight_value.
+          Always use SUM(revenue) for total revenue calculations.
+          This is the correct Olist revenue definition.
+        tests: [not_null]
+
+      - name: review_score
+        description: >
+          Customer satisfaction: 1 (worst) to 5 (best).
+          NULL for ~10% of orders where no review was left.
+          KPI: AVG(review_score) WHERE review_score IS NOT NULL.
+
+  # ── DIMENSION TABLES ───────────────────────────────────────────
+  - name: dim_customer
+    description: >
+      One row per customer transaction identity (customer_id).
+
+      IMPORTANT: A real person who places 3 orders has 3 different customer_id
+      values but 1 customer_unique_id. Always use customer_unique_id to count
+      unique buyers or analyse repeat purchase behaviour.
+
+      city and state reflect the delivery address.
+
+    columns:
+      - name: customer_id
+        description: PK. Transaction-level ID — new value per order for repeat buyers.
+        tests: [not_null, unique]
+
+      - name: customer_unique_id
+        description: >
+          Stable person-level identifier. Use this for:
+          - COUNT(DISTINCT customer_unique_id) to count unique buyers
+          - Repeat purchase analysis
+          - Customer lifetime value
+
+      - name: city
+        description: Customer delivery city (Portuguese, not normalised).
+
+      - name: state
+        description: Brazilian state abbreviation (e.g. SP, RJ, MG). 27 possible values.
+
+      - name: region
+        description: >
+          Derived Brazilian macro-region.
+          Values: Southeast, South, Northeast, Central-West, North, Unknown.
+          Southeast (SP, RJ, MG, ES) accounts for ~60% of all orders.
+
+  - name: dim_product
+    description: >
+      One row per product. Category names translated Portuguese to English.
+      74 distinct category_name values. Physical dimensions available for
+      freight cost analysis.
+
+    columns:
+      - name: product_id
+        description: PK.
+        tests: [not_null, unique]
+
+      - name: category_name
+        description: >
+          Product category in English. 74 distinct values.
+          Top categories by order volume: bed_bath_table, health_beauty,
+          sports_leisure, furniture_decor, computers_accessories, housewares,
+          watches_gifts. Use for GROUP BY in category analysis.
+
+      - name: weight_g
+        description: Product weight in grams. Correlates with freight_value.
+
+      - name: volume_cm3
+        description: Derived volume = length_cm x height_cm x width_cm. Proxy for package size.
+
+  - name: dim_seller
+    description: One row per seller registered on the Olist marketplace.
+
+    columns:
+      - name: seller_id
+        description: PK.
+        tests: [not_null, unique]
+
+      - name: city
+        description: Seller location city.
+
+      - name: state
+        description: Seller state abbreviation.
+
+      - name: region
+        description: Derived macro-region. Same mapping as dim_customer.region.
+
+  - name: dim_date
+    description: >
+      Standard date dimension. Covers 2016-01-01 to 2019-12-31.
+      Join to fact_order_items on date_id = date_id.
+      Use year_month for monthly time series (format YYYY-MM).
+      Use year_quarter for quarterly rollups (format YYYY-Q1).
+
+    columns:
+      - name: date_id
+        description: PK. Integer YYYYMMDD (e.g. 20180315). FK target from fact_order_items.
+        tests: [not_null, unique]
+
+      - name: date_day
+        description: The actual DATE value. Use for date arithmetic.
+
+      - name: year
+        description: Calendar year. Dataset covers 2016, 2017, 2018.
+
+      - name: quarter
+        description: Quarter number 1-4.
+
+      - name: month
+        description: Month number 1-12.
+
+      - name: month_name
+        description: Full month name e.g. January.
+
+      - name: year_month
+        description: String YYYY-MM e.g. 2018-03. Best column for monthly GROUP BY.
+
+      - name: year_quarter
+        description: String YYYY-QN e.g. 2018-Q1. Best column for quarterly GROUP BY.
+
+      - name: is_weekend
+        description: TRUE if Saturday or Sunday.
+
+# ═════════════════════════════════════════════════════════════════
+#  CANONICAL KPI DEFINITIONS
+#  These are injected into the agent system prompt alongside the
+#  table descriptions above. The agent uses them to produce
+#  correct metric SQL without hallucinating formulas.
+# ═════════════════════════════════════════════════════════════════
+#
+#  revenue            = SUM(fact_order_items.revenue)
+#                     = SUM(price + freight_value)
+#                       WHERE order_status = 'delivered'
+#
+#  avg_order_value    = SUM(revenue) / COUNT(DISTINCT order_id)
+#
+#  unique_buyers      = COUNT(DISTINCT dim_customer.customer_unique_id)
+#
+#  repeat_buyer_rate  = COUNT(DISTINCT customer_unique_id with >1 order)
+#                       / COUNT(DISTINCT customer_unique_id)
+#
+#  on_time_rate       = AVG(CASE WHEN delivery_delta_days <= 0
+#                               THEN 1.0 ELSE 0.0 END)
+#                       WHERE order_status = 'delivered'
+#
+#  avg_review_score   = AVG(review_score)
+#                       WHERE review_score IS NOT NULL
+#
+#  late_orders_pct    = 100.0
+#                       * SUM(CASE WHEN delivery_delta_days > 0 THEN 1 ELSE 0 END)
+#                       / COUNT(*)
+#                       WHERE order_status = 'delivered'
