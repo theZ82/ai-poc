@@ -297,3 +297,35 @@ models:
         description: Average revenue per order for this category (total_revenue / total_orders), in BRL.
         tests:
           - not_null
+
+- name: revenue_by_category_2018
+    description: >
+      Top 5 product categories ranked by total revenue (price + freight) for
+      delivered orders placed in 2018. Grain: one row per category (5 rows total).
+      Revenue is the canonical Olist metric: price + freight_value.
+      Ranking is deterministic via ROW_NUMBER() ordered by total_revenue desc.
+    config:
+      materialized: table
+    columns:
+      - name: revenue_rank
+        description: Deterministic rank of the category by total_revenue descending (1 = highest revenue). Range 1–5.
+        tests:
+          - not_null
+          - unique
+      - name: category_name
+        description: English product category name from dim_product. One of 74 possible values.
+        tests:
+          - not_null
+          - unique
+      - name: total_revenue
+        description: Sum of (price + freight_value) for all delivered order items in this category in 2018, in BRL.
+        tests:
+          - not_null
+      - name: total_orders
+        description: Count of distinct orders containing at least one item in this category in 2018.
+        tests:
+          - not_null
+      - name: avg_order_value
+        description: Average revenue per order for this category (total_revenue / total_orders), in BRL.
+        tests:
+          - not_null
