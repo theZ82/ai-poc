@@ -395,3 +395,30 @@ models:
           identity (customer_id) to correctly count real repeat purchasers.
         tests:
           - not_null
+
+- name: top_10_sellers_by_number_of_orders
+    description: >
+      Model answering: Top 10 sellers by number of orders?
+      Ranks sellers by the count of distinct delivered orders they fulfilled
+      on the Olist marketplace. Only orders with status 'delivered' are included,
+      in line with the canonical business rule for completed order analysis.
+    columns:
+      - name: seller_id
+        description: Unique seller identifier. FK to dim_seller.seller_id.
+        tests:
+          - not_null
+          - unique
+      - name: seller_city
+        description: City where the seller is located.
+        tests:
+          - not_null
+      - name: seller_state
+        description: Brazilian state abbreviation where the seller is located (e.g. SP, RJ, MG).
+        tests:
+          - not_null
+      - name: total_orders
+        description: >
+          Count of distinct delivered orders fulfilled by this seller.
+          Uses COUNT(DISTINCT order_id) to avoid double-counting multi-item orders.
+        tests:
+          - not_null
