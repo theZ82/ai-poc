@@ -28,5 +28,5 @@ final AS (
     FROM order_counts_per_customer
 )
 
-SELECT * FROM final
+SELECT repeat_customers FROM final
 
