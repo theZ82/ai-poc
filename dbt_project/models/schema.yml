@@ -363,3 +363,35 @@ models:
         description: Average revenue per order for this category (total_revenue / total_orders), in BRL.
         tests:
           - not_null
+
+- name: nbr_customers_one_order
+    description: >
+      Model answering: How many customers placed more than one order?
+      Counts the number of unique buyers (identified by customer_unique_id)
+      who have placed more than one order on the Olist marketplace.
+      A repeat buyer is defined as a person with more than one distinct order_id
+      across all their transaction-level customer_id records.
+    columns:
+      - name: repeat_customers
+        description: >
+          Count of unique buyers (customer_unique_id) who placed more than one order.
+          Uses person-level identity (customer_unique_id) rather than transaction-level
+          identity (customer_id) to correctly count real repeat purchasers.
+        tests:
+          - not_null
+
+- name: nbr_customers_one_order
+    description: >
+      Model answering: How many customers placed more than one order?
+      Counts the number of unique buyers (identified by customer_unique_id)
+      who have placed more than one order on the Olist marketplace.
+      A repeat buyer is defined as a person with more than one distinct order_id
+      across all their transaction-level customer_id records.
+    columns:
+      - name: repeat_customers
+        description: >
+          Count of unique buyers (customer_unique_id) who placed more than one order.
+          Uses person-level identity (customer_unique_id) rather than transaction-level
+          identity (customer_id) to correctly count real repeat purchasers.
+        tests:
+          - not_null
